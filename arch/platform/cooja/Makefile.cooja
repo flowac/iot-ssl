@@ -104,7 +104,8 @@ CFLAGSNO = $(JAVA_CFLAGS) $(EXTRA_CC_ARGS) -Wall -DCLASSNAME=$(CLASSNAME)
 ifeq ($(WERROR),1)
 CFLAGSNO += -Werror
 endif
-CFLAGS   += $(CFLAGSNO)
+CFLAGS   += $(CFLAGSNO) -I/usr/include/openssl
+PROJECT_LIBRARIES += /usr/lib/x86_64-linux-gnu/libssl.a /usr/lib/x86_64-linux-gnu/libcrypto.a
 
 # Set build/cooja/mtype<NNN>.map as mapfile for the final link. The rest
 # of the rule resides in Makefile.include.
