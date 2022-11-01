@@ -16,7 +16,7 @@
 
 #include <openssl/evp.h>
 #include <openssl/opensslv.h>
-
+#include "dev/serial-line.h"
 #include "sys/log.h"
 #define LOG_MODULE "App"
 #define LOG_LEVEL LOG_LEVEL_INFO
@@ -24,9 +24,10 @@
 #define MAX_AUTH_RETRY 2
 
 /*---------------------------------------------------------------------------*/
+PROCESS(test_serial_process, "Serial test process");
 PROCESS(button_hal_example, "Button HAL Example");
 PROCESS(nullnet_example_process, "NullNet unicast example");
-AUTOSTART_PROCESSES(&button_hal_example, &nullnet_example_process);
+AUTOSTART_PROCESSES(&button_hal_example, &nullnet_example_process,&test_serial_process);
 /*---------------------------------------------------------------------------*/
 static uint8_t accept_next_conn = 0;
 PROCESS_THREAD(button_hal_example, ev, data)
@@ -46,6 +47,34 @@ PROCESS_THREAD(button_hal_example, ev, data)
 		}
 	}
 	PROCESS_END();
+}
+
+
+
+
+
+PROCESS_THREAD(test_serial_process, ev, data)
+{
+  static struct etimer et;
+
+  PROCESS_BEGIN();
+
+  etimer_set(&et, CLOCK_SECOND*100);
+
+  while(1) {
+    PROCESS_WAIT_EVENT();
+
+    if (etimer_expired(&et)) {
+      printf("Waiting for serial data\n");
+      etimer_restart(&et);
+    }
+
+    if(ev == serial_line_event_message) {
+      printf("Message received: '%s'\n", (char*)data);
+    }
+  }
+
+  PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
 void input_callback(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest)
