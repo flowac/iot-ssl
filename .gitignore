@@ -12,6 +12,11 @@
 *.ihex
 *.pyc
 *~
+.gitignore
+GPATH
+GRTAGS
+GTAGS
+gtags.files
 build/*
 Makefile.target
 Makefile.*.defines
