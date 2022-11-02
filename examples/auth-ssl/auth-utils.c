@@ -28,7 +28,7 @@
 #define MAX_AUTH_RETRY 2
 #define MAX_DEVICES 16
 
-enum DTYPE
+enum OP_TYPE
 {
 	SEND_PUB_KEY = 0,
 	SEND_DEVTYPE = 1,
@@ -62,7 +62,8 @@ void broadcast_pub_key(void)
 {
 	memset(OUT_DATA, 0, DATA_LEN);
 	OUT_DATA[0] = SEND_PUB_KEY;
-	memcpy(OUT_DATA + 1, PUB_KEY, ED25519_LEN);
+	memcpy(OUT_DATA + 1, linkaddr_node_addr.u8, LINKADDR_SIZE);
+	memcpy(OUT_DATA + 1 + LINKADDR_SIZE, PUB_KEY, ED25519_LEN);
 	NETSTACK_NETWORK.output(NULL);
 }
 
@@ -79,11 +80,14 @@ void send_link_msg(const linkaddr_t *target, const char *msg)
 
 void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest)
 {
-	static uint8_t link_auth[MAX_DEVICES] = {};
-	static uint8_t *link_key[MAX_DEVICES] = {};
+	static uint8_t link_auth[MAX_DEVICES] = {}; // authentication status
+	static uint8_t *link_key[MAX_DEVICES] = {}; // public keys
+	static uint8_t *link_secret[MAX_DEVICES] = {}; // shared secret keys
 	uint8_t srcid = src->u8[0];
 	uint8_t myid = dest->u8[0]; (void) myid;
 	uint8_t *data = (uint8_t *) raw_data;
+	linkaddr_t broadcast_src;
+	enum OP_TYPE opt;
 
 	if (len < DATA_LEN || srcid > MAX_DEVICES) return;
 	if (link_auth[srcid] > MAX_AUTH_RETRY && link_auth[srcid] < 0xFF)
@@ -92,29 +96,37 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 		return;
 	}
 
-	if (data[0] == SEND_PUB_KEY)
-	{
-		// TODO: add sender address in data section to prevent a reply all
+	opt = data[0];
+	data += 1;
+	--len;
 
+	if (opt == SEND_PUB_KEY)
+	{
 		//if ((srcid & 1) != (myid & 1)) return; // device ID matching
 		if (link_key[srcid]) return;
+		memcpy(broadcast_src.u8, data, LINKADDR_SIZE);
+		data += LINKADDR_SIZE;
+
 		link_key[srcid] = calloc(ED25519_LEN, 1);
-		memcpy(link_key[srcid], data + 1, ED25519_LEN);
+		memcpy(link_key[srcid], data, ED25519_LEN);
 
 		LOG_INFO("Init key exchange with (%u)\n", srcid);
 		memset(OUT_DATA, 0, DATA_LEN);
 		OUT_DATA[0] = KEY_EXCHANGE;
 
 		// TODO: calculate proper key hash. current value is placeholder
+		// 1. EVP_PKEY_derive
+		// 2. Hash it with SHA3-256
+		// 3. Encrypt message with the new key
+		(void) link_secret[srcid];
 		memcpy(OUT_DATA + 1, PUB_KEY, ED25519_LEN);
-		// TODO: return to sender instead of reply all
-		NETSTACK_NETWORK.output(src);
+		NETSTACK_NETWORK.output(&broadcast_src);
 	}
-	else if (data[0] == SEND_DEVTYPE)
+	else if (opt == SEND_DEVTYPE)
 	{
 		// not implemented yet
 	}
-	else if (data[0] == KEY_EXCHANGE)
+	else if (opt == KEY_EXCHANGE)
 	{
 		if (link_auth[srcid] == 0xFF) return;
 
@@ -123,15 +135,15 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 		LOG_INFO("Authenticated %u\n", srcid);
 		send_link_msg(src, "Hello :)");
 	}
-	else if (data[0] == SEND_MESSAGE)
+	else if (opt == SEND_MESSAGE)
 	{
 		if (link_auth[srcid] != 0xFF) return;
 		printf("Got message from %d: ", srcid);
-		printChars(data, DATA_LEN);
+		printChars(data, len);
 	}
 	else
 	{
-		LOG_ERR("Invalid message type %d\n", data[0]);
+		LOG_ERR("Invalid message type %d\n", opt);
 	}
 }
 
