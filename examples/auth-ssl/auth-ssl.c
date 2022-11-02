@@ -75,7 +75,7 @@ PROCESS_THREAD(nullnet_example_process, ev, data)
 
 	if (!newKeyPair(PUB_KEY, PRIV_KEY))
 	{
-		LOG_ERR("ED25519 key gen error\n");
+		LOG_ERR("X25519 key gen error\n");
 		goto cleanup;
 	}
 
