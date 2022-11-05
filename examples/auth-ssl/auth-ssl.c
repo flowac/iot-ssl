@@ -73,17 +73,11 @@ PROCESS_THREAD(nullnet_example_process, ev, data)
 	nullnet_len = DATA_LEN;
 	nullnet_set_input_callback(input_callback);
 
-	if (!newKeyPair(PUB_KEY, PRIV_KEY))
-	{
-		LOG_ERR("X25519 key gen error\n");
-		goto cleanup;
-	}
-
 	etimer_set(&periodic_timer, SEND_INTERVAL);
 	LOG_DBG("SSL Version %d --- ", OPENSSL_VERSION_MAJOR);
 	LOG_DBG_LLADDR(&linkaddr_node_addr);
 	LOG_DBG_("\n");
-	broadcast_pub_key();
+	if (!broadcast_pub_key()) goto cleanup;
 
 	while(1)
 	{
