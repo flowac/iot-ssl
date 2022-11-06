@@ -26,7 +26,7 @@ PROCESS_THREAD(button_hal_example, ev, data)
 		{
 			btn = (button_hal_button_t *)data;
 			printf("Button %u released (%s)\n", btn->unique_id, BUTTON_HAL_GET_DESCRIPTION(btn));
-			broadcast_pub_key();
+			send_pub_key(1, NULL);
 		}
 	}
 	PROCESS_END();
@@ -77,12 +77,14 @@ PROCESS_THREAD(nullnet_example_process, ev, data)
 	LOG_DBG("SSL Version %d --- ", OPENSSL_VERSION_MAJOR);
 	LOG_DBG_LLADDR(&linkaddr_node_addr);
 	LOG_DBG_("\n");
-	if (!broadcast_pub_key()) goto cleanup;
+	if (!new_key_pair(PUB_KEY, PRIV_KEY)) goto cleanup;
 
 	while(1)
 	{
 		PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&periodic_timer));
 		etimer_reset(&periodic_timer);
 	}
-cleanup: PROCESS_END();
+
+cleanup:
+	PROCESS_END();
 }

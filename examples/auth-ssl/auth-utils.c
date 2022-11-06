@@ -23,6 +23,7 @@
 #define LOG_LEVEL LOG_LEVEL_INFO
 #define SEND_INTERVAL (CLOCK_SECOND << 1)
 
+#define IV_LEN 12
 #define X25519_LEN 32
 #define DATA_LEN 64
 #define MAX_AUTH_RETRY 2
@@ -30,23 +31,34 @@
 
 enum OP_TYPE
 {
-	SEND_PUB_KEY = 0,
-	SEND_MESSAGE = 1,
+	SEND_PUB_KEY = 0, // broadcast public key
+	RETN_PUB_KEY = 1, // send public key to a specific address
+	SEND_MESSAGE = 2, // send message
 	INVALID_TYPE
 };
 
-uint8_t OUT_DATA[DATA_LEN]; // output data
+static uint8_t IV[IV_LEN];
+static uint8_t OUT_DATA[DATA_LEN]; // output data
 static uint8_t PUB_KEY[X25519_LEN], PRIV_KEY[X25519_LEN]; // public private X25519 key pair
-static uint8_t *link_key[MAX_DEVICES] = {}; // public keys
 static uint8_t *link_secret[MAX_DEVICES] = {}; // shared secret keys
+static uint64_t link_nonce[MAX_DEVICES] = {}; // nonce of devices
 
-// public key auth
-// man in the middle accepts
-// public key certificate
+void calc_iv(int idx)
+{
+	++link_nonce[idx];
+	memcpy(IV, link_secret[idx] + (link_secret[idx][0] % 28), 4);
+	memcpy(IV + 4, &(link_nonce[idx]), 8);
+}
 
-void print_link_msg(uint8_t *data, uint32_t len)
+void print_link_msg(int idx, uint8_t *data, uint32_t len)
 {
 	uint32_t i;
+
+	if (!link_secret[idx]) return;
+	calc_iv(idx);
+
+	// TODO: encrypt message
+
 	for (i = 0; i < len && data[i]; i++) printf("%c", data[i]);
 	printf("\n");
 }
@@ -58,10 +70,13 @@ void print_bytes(uint8_t *data, uint32_t len)
 	printf("\n");
 }
 
-void send_link_msg(const linkaddr_t *target, const char *msg)
+void send_link_msg(int idx, const linkaddr_t *target, const char *msg)
 {
 	int msglen = strlen(msg);
 	if (msglen > DATA_LEN - 2) msglen = DATA_LEN - 2;
+
+	if (!link_secret[idx]) return;
+	calc_iv(idx);
 
 	memset(OUT_DATA, 0, DATA_LEN);
 	OUT_DATA[0] = SEND_MESSAGE;
@@ -69,7 +84,7 @@ void send_link_msg(const linkaddr_t *target, const char *msg)
 	NETSTACK_NETWORK.output(target);
 }
 
-uint8_t *gen_secret(uint8_t pub[X25519_LEN], uint8_t priv[X25519_LEN], uint32_t *digest_len)
+uint8_t *gen_secret(uint8_t *pub, uint8_t *priv, uint32_t *digest_len)
 {
 	uint8_t *secret = NULL, *digest = NULL;
 	uint64_t secret_len;
@@ -128,34 +143,32 @@ cleanup:
 	return ret;
 }
 
-int broadcast_pub_key(void)
+int send_pub_key(int generate, const linkaddr_t *dest)
 {
 	int ret = 0, i;
-	uint32_t secret_len;
 
-	if (!new_key_pair(PUB_KEY, PRIV_KEY))
+	if (generate)
 	{
-		LOG_ERR("X25519 key gen error\n");
-		goto cleanup;
-	}
-
-	for (i = 0; i < MAX_DEVICES; ++i)
-	{
-		if (!link_key[i]) continue;
-		if (!(link_secret[i] = gen_secret(link_key[i], PRIV_KEY, &secret_len)))
+		for (i = 0; i < MAX_DEVICES; ++i)
 		{
-			LOG_ERR("Failed to update shared secret with %d\n", i);
-			continue;
+			if (!link_secret[i]) continue;
+			free(link_secret[i]);
+			link_secret[i] = NULL;
 		}
-		LOG_INFO("Updated shared secret with %u: ", i);
-		print_bytes(link_secret[i], secret_len);
+
+		if (!new_key_pair(PUB_KEY, PRIV_KEY))
+		{
+			LOG_ERR("X25519 key gen error\n");
+			goto cleanup;
+		}
 	}
+	LOG_INFO("Sending public key to %d, generate = %d\n", dest ? dest->u8[0] : 0, generate);
 
 	memset(OUT_DATA, 0, DATA_LEN);
-	OUT_DATA[0] = SEND_PUB_KEY;
+	OUT_DATA[0] = generate ? SEND_PUB_KEY : RETN_PUB_KEY;
 	memcpy(OUT_DATA + 1, linkaddr_node_addr.u8, LINKADDR_SIZE);
 	memcpy(OUT_DATA + 1 + LINKADDR_SIZE, PUB_KEY, X25519_LEN);
-	NETSTACK_NETWORK.output(NULL);
+	NETSTACK_NETWORK.output(dest);
 	ret = 1;
 
 cleanup:
@@ -183,24 +196,23 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 	data += 1;
 	--len;
 
-	if (opt == SEND_PUB_KEY)
+	if (opt <= RETN_PUB_KEY)
 	{
 		//if ((srcid & 1) != (myid & 1)) return; // device ID matching
 		memcpy(broadcast_src.u8, data, LINKADDR_SIZE);
 		data += LINKADDR_SIZE;
 
-		link_key[srcid] = calloc(X25519_LEN, 1);
-		memcpy(link_key[srcid], data, X25519_LEN);
-
-		if (!(link_secret[srcid] = gen_secret(link_key[srcid], PRIV_KEY, &secret_len))) return;
+		if (!(link_secret[srcid] = gen_secret(data, PRIV_KEY, &secret_len))) return;
 		LOG_INFO("Shared secret with %u: ", srcid);
 		print_bytes(link_secret[srcid], secret_len);
-		send_link_msg(&broadcast_src, "Hello :)");
+
+		if (opt == RETN_PUB_KEY) send_link_msg(srcid, &broadcast_src, "key exchanged");
+		else                     send_pub_key(0, &broadcast_src);
 	}
 	else if (opt == SEND_MESSAGE)
 	{
 		LOG_INFO_("Got message from %d: ", srcid);
-		print_link_msg(data, len);
+		print_link_msg(srcid, data, len);
 	}
 	else
 	{
