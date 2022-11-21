@@ -64,11 +64,8 @@ PROCESS_THREAD(nullnet_example_process, ev, data)
 	static struct etimer periodic_timer;
 
 	PROCESS_BEGIN();
-	/* Initialize NullNet */
 
-	// TODO: make the buffer bigger and introduce op codes
-	// connect, post, get, delete, etc
-
+	// Initialize NullNet
 	nullnet_buf = OUT_DATA;
 	nullnet_len = DATA_LEN;
 	nullnet_set_input_callback(input_callback);
