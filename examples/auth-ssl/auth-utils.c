@@ -10,9 +10,11 @@
 #include "net/netstack.h"
 #include "net/nullnet/nullnet.h"
 #include "sys/node-id.h"
+#include "lib/random.h"
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <openssl/evp.h>
 #include <openssl/opensslv.h>
@@ -33,18 +35,22 @@ enum OP_TYPE
 {
 	SEND_PUB_KEY = 0, // broadcast public key
 	RETN_PUB_KEY = 1, // send public key to a specific address
-	SEND_MESSAGE = 2, // send message
+	CHECK_SECRET = 2, // check the shared secret received
+	SEND_MESSAGE = 3, // send encrypted message
+	SEND_RAW_TXT = 4, // send plain-text message
 	INVALID_TYPE
 };
 
-static uint8_t IV[IV_LEN]; // encryption initialization vector
-static uint8_t OUT_DATA[DATA_LEN]; // output data
+static uint16_t OTP = 0; // one-time passcode
+static uint8_t OUT_DATA[DATA_LEN]; // output data buffer for inter-node communications
+static linkaddr_t TMP_REQ_SRC; // link address of incoming peering request
+static uint8_t TMP_PUB_KEY[X25519_LEN]; // public key of incoming peering request
 static uint8_t PUB_KEY[X25519_LEN], PRIV_KEY[X25519_LEN]; // public private X25519 key pair
 static uint8_t *link_secret[MAX_DEVICES] = {}; // shared secret keys
 static uint64_t link_nonce[MAX_DEVICES] = {}; // nonce of devices
 
 // Calculate shared initialization vector value for the specified node pair
-void calc_iv(int idx)
+void calc_iv(int idx, uint8_t IV[IV_LEN])
 {
 	++link_nonce[idx];
 	memcpy(IV, link_secret[idx] + (link_secret[idx][0] % 28), 4);
@@ -67,58 +73,68 @@ void print_chars(uint8_t *data, uint32_t len)
 	printf("\n");
 }
 
-// Decrypt and print a link message
-void print_link_msg(int idx, uint8_t *data)
+// Decrypt a link message
+void decrypt_link_msg(int idx, uint8_t *data, uint8_t *outdata, uint32_t *outlen)
 {
-	int datalen = data[0], outlen = 0, tmplen = 0;
+	int datalen = data[0], tmplen = 0;
+	uint8_t IV[IV_LEN]; // AES-GCM initialization vector
 	EVP_CIPHER_CTX *ctx = NULL;
 
+	*outlen = 0;
 	data += 1;
 	if (idx > MAX_DEVICES || !(link_secret[idx])) goto cleanup;
-	calc_iv(idx);
+	calc_iv(idx, IV);
 
 	if (!(ctx = EVP_CIPHER_CTX_new())) goto cleanup;
 	if (EVP_DecryptInit_ex2(ctx, EVP_aes_256_gcm(), link_secret[idx], IV, NULL) < 1) goto cleanup;
 	if (EVP_CIPHER_CTX_set_padding(ctx, 0) < 1) goto cleanup;
-	if (EVP_DecryptUpdate(ctx, OUT_DATA, &tmplen, data + 16, datalen) < 1) goto cleanup;
-	outlen = tmplen;
+	if (EVP_DecryptUpdate(ctx, outdata, &tmplen, data + 16, datalen) < 1) goto cleanup;
+	*outlen = tmplen;
 	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, data) < 1) goto cleanup;
-	if (EVP_DecryptFinal_ex(ctx, OUT_DATA + outlen, &tmplen) < 1) goto cleanup;
-	outlen += tmplen;
-
-	printf("%d bytes decrypted: ", outlen);
-	print_chars(OUT_DATA, outlen);
+	if (EVP_DecryptFinal_ex(ctx, outdata + *outlen, &tmplen) < 1) goto cleanup;
+	*outlen += tmplen;
 
 cleanup:
 	if (ctx) EVP_CIPHER_CTX_free(ctx);
 }
 
-// Encrypt and send a link message
-void send_link_msg(int idx, const linkaddr_t *target, const char *msg)
+// Send an encrypted message
+void send_enc_msg(int idx, const linkaddr_t *target, const enum OP_TYPE opt, const void *msg, const uint32_t msglen)
 {
-	int msglen = strlen(msg), outlen = 0, tmplen = 0;
+	int outlen = 0, tmplen = 0;
+	uint8_t IV[IV_LEN]; // AES-GCM initialization vector
 	EVP_CIPHER_CTX *ctx = NULL;
 
 	if (idx > MAX_DEVICES || !(link_secret[idx])) goto cleanup;
-	calc_iv(idx);
+	calc_iv(idx, IV);
 	memset(OUT_DATA, 0, DATA_LEN);
 
 	if (!(ctx = EVP_CIPHER_CTX_new())) goto cleanup;
 	if (EVP_EncryptInit_ex2(ctx, EVP_aes_256_gcm(), link_secret[idx], IV, NULL) < 1) goto cleanup;
 	if (EVP_CIPHER_CTX_set_padding(ctx, 0) < 1) goto cleanup;
-	if (EVP_EncryptUpdate(ctx, OUT_DATA + 18, &tmplen, (const uint8_t *) msg, msglen) < 1) goto cleanup;
+	if (EVP_EncryptUpdate(ctx, OUT_DATA + 18, &tmplen, msg, msglen) < 1) goto cleanup;
 	outlen = tmplen;
 	if (EVP_EncryptFinal_ex(ctx, OUT_DATA + 18 + outlen, &tmplen) < 1) goto cleanup;
 	outlen += tmplen;
 	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, OUT_DATA + 2) < 1) goto cleanup;
 
 	printf("%d bytes encrypted + 16 byte tag\n", outlen);
-	OUT_DATA[0] = SEND_MESSAGE;
+	OUT_DATA[0] = opt;
 	OUT_DATA[1] = (uint8_t) (outlen & 0xFF);
 	NETSTACK_NETWORK.output(target);
 
 cleanup:
 	if (ctx) EVP_CIPHER_CTX_free(ctx);
+}
+
+// Send a plain-text message
+void send_raw_msg(const linkaddr_t *dest, const enum OP_TYPE opt, const void *msg, const uint32_t msglen)
+{
+	memset(OUT_DATA, 0, DATA_LEN);
+	OUT_DATA[0] = opt;
+	OUT_DATA[1] = (uint8_t) (msglen & 0xFF);
+	memcpy(OUT_DATA + 2, msg, msglen);
+	NETSTACK_NETWORK.output(dest);
 }
 
 // Generate shared secret between node pairs
@@ -175,8 +191,8 @@ int new_key_pair(uint8_t pub[X25519_LEN], uint8_t priv[X25519_LEN])
 	if (EVP_PKEY_get_raw_public_key(key, pub, &pubLen) < 1) goto cleanup;
 	if (EVP_PKEY_get_raw_private_key(key, priv, &privLen) < 1) goto cleanup;
 	LOG_DBG("pub[%lu] priv[%lu]\n", pubLen, privLen);
-	print_bytes(pub, pubLen);
-	print_bytes(priv, privLen);
+	//print_bytes(pub, pubLen);
+	//print_bytes(priv, privLen);
 	ret = 1;
 
 cleanup:
@@ -185,54 +201,15 @@ cleanup:
 	return ret;
 }
 
-// Broadcast the public key of the current node
-int send_pub_key(int generate, const linkaddr_t *dest)
-{
-	int ret = 0, i;
-
-	if (generate)
-	{
-		for (i = 0; i < MAX_DEVICES; ++i)
-		{
-			if (link_secret[i])
-			{
-				free(link_secret[i]);
-				link_secret[i] = NULL;
-			}
-		}
-
-		if (!new_key_pair(PUB_KEY, PRIV_KEY))
-		{
-			LOG_ERR("X25519 key gen error\n");
-			goto cleanup;
-		}
-	}
-	LOG_INFO("Sending public key to %d, generate = %d\n", dest ? dest->u8[0] : 0, generate);
-
-	memset(OUT_DATA, 0, DATA_LEN);
-	OUT_DATA[0] = generate ? SEND_PUB_KEY : RETN_PUB_KEY;
-	memcpy(OUT_DATA + 1, linkaddr_node_addr.u8, LINKADDR_SIZE);
-	memcpy(OUT_DATA + 1 + LINKADDR_SIZE, PUB_KEY, X25519_LEN);
-	NETSTACK_NETWORK.output(dest);
-	ret = 1;
-
-cleanup:
-	return ret;
-}
-
 // Network connection callback
 void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest)
 {
-	// TODO: use a one time passcode to perform node authentication
-	// TODO: increment failed auth count for failed message decryptions
-	// TODO: check if the device ID matching below is needed
-
 	static uint8_t link_auth[MAX_DEVICES] = {}; // authentication status
 	uint8_t srcid = src->u8[0];
 	uint8_t myid = dest->u8[0]; (void) myid;
 	uint8_t *data = (uint8_t *) raw_data;
-	uint32_t secret_len;
-	linkaddr_t broadcast_src;
+	uint16_t tmp;
+	uint32_t outlen;
 	enum OP_TYPE opt;
 
 	if (len < DATA_LEN || srcid > MAX_DEVICES) return;
@@ -243,26 +220,65 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 	}
 
 	opt = data[0];
-	data += 1;
+	data++;
 	--len;
 
-	if (opt <= RETN_PUB_KEY)
+	if (opt == SEND_PUB_KEY)
 	{
-		//if ((srcid & 1) != (myid & 1)) return; // device ID matching
-		memcpy(broadcast_src.u8, data, LINKADDR_SIZE);
-		data += LINKADDR_SIZE;
+		data++; // ignore msg length indicator
+		memcpy(TMP_REQ_SRC.u8, data, LINKADDR_SIZE);
+		memcpy(TMP_PUB_KEY, data + LINKADDR_SIZE, X25519_LEN);
+	}
+	else if (opt == RETN_PUB_KEY)
+	{
+		data++; // ignore msg length indicator
+		memcpy(&tmp, data, 2);
+		if (OTP == 0 || OTP != tmp)
+		{
+			LOG_ERR("%d entered incorrect OTP: %u\n", srcid, tmp);
+			link_auth[srcid]++;
+			return;
+		}
 
-		if (!gen_secret(data, PRIV_KEY, &secret_len, srcid)) return;
+		LOG_INFO("%d entered correct OTP: %u\n", srcid, OTP);
+		OTP = 0;
+		if (!gen_secret(data + 2, PRIV_KEY, &outlen, srcid)) return;
 		LOG_INFO("Shared secret with %u: ", srcid);
-		print_bytes(link_secret[srcid], secret_len);
+		print_chars(link_secret[srcid], outlen);
+		send_enc_msg(srcid, src, CHECK_SECRET, link_secret[srcid], outlen);
+	}
+	else if (opt == CHECK_SECRET)
+	{
+		if (!link_secret[srcid]) return;
+		LOG_INFO("Got shared secret check from %d: ", srcid);
+		decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
+		printf("%d bytes decrypted: ", outlen);
+		print_chars(OUT_DATA, outlen);
 
-		if (opt == RETN_PUB_KEY) send_link_msg(srcid, &broadcast_src, "key exchanged");
-		else                     send_pub_key(0, &broadcast_src);
+		if (0 == memcmp(link_secret[srcid], OUT_DATA, outlen))
+		{
+			LOG_INFO("%d is fully authenticated\n", srcid);
+			char *retmsg = "Shared secret matched";
+			send_enc_msg(srcid, src, SEND_MESSAGE, retmsg, strlen(retmsg));
+		}
+		else
+		{
+			LOG_ERR("%d failed to authenticate\n", srcid);
+			link_auth[srcid]++;
+		}
 	}
 	else if (opt == SEND_MESSAGE)
 	{
-		LOG_INFO_("Got message from %d: ", srcid);
-		print_link_msg(srcid, data);
+		if (!link_secret[srcid]) return;
+		LOG_INFO("Got message from %d: ", srcid);
+		decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
+		printf("%d bytes decrypted: ", outlen);
+		print_chars(OUT_DATA, outlen);
+	}
+	else if (opt == SEND_RAW_TXT)
+	{
+		LOG_INFO("Got message from %d: ", srcid);
+		print_chars(data + 1, data[0]);
 	}
 	else
 	{

@@ -26,7 +26,16 @@ PROCESS_THREAD(button_hal_example, ev, data)
 		{
 			btn = (button_hal_button_t *)data;
 			printf("Button %u released (%s)\n", btn->unique_id, BUTTON_HAL_GET_DESCRIPTION(btn));
-			send_pub_key(1, NULL);
+
+			memset(OUT_DATA, 0, DATA_LEN);
+			OUT_DATA[0] = SEND_PUB_KEY;
+			OUT_DATA[1] = LINKADDR_SIZE + X25519_LEN;
+			memcpy(OUT_DATA + 2, linkaddr_node_addr.u8, LINKADDR_SIZE);
+			memcpy(OUT_DATA + 2 + LINKADDR_SIZE, PUB_KEY, X25519_LEN);
+			NETSTACK_NETWORK.output(NULL);
+
+			OTP = random_rand();
+			printf("Generated OTP %u\n", OTP);
 		}
 	}
 	PROCESS_END();
@@ -35,6 +44,9 @@ PROCESS_THREAD(button_hal_example, ev, data)
 PROCESS_THREAD(test_serial_process, ev, data)
 {
 	static struct etimer et;
+	uint16_t tmp, srcid;
+	uint32_t outlen;
+	char *msg = data;
 
 	PROCESS_BEGIN();
 
@@ -52,16 +64,61 @@ PROCESS_THREAD(test_serial_process, ev, data)
 
 		if (ev == serial_line_event_message)
 		{
-			printf("Message received: '%s'\n", (char*)data);
+			printf("Message received: '%s'\n", msg);
+			switch (msg[0])
+			{
+			case '0':
+				srcid = TMP_REQ_SRC.u8[0];
+				if (!gen_secret(TMP_PUB_KEY, PRIV_KEY, &outlen, srcid)) goto cleanup;
+				LOG_INFO("Shared secret with %u: ", srcid);
+
+				tmp = strtol(msg + 1, NULL, 10);
+				printf("Sending OTP: %d\n", tmp);
+
+				memset(OUT_DATA, 0, DATA_LEN);
+				OUT_DATA[0] = RETN_PUB_KEY;
+				OUT_DATA[1] = (2 + X25519_LEN) & 0xFF;
+				memcpy(OUT_DATA + 2, &tmp, 2);
+				memcpy(OUT_DATA + 4, PUB_KEY, X25519_LEN);
+				NETSTACK_NETWORK.output(&TMP_REQ_SRC);
+				break;
+
+			case '1':
+				printf("Re-generating public private key pair\n");
+				OTP = 0;
+				for (tmp = 0; tmp < MAX_DEVICES; ++tmp)
+				{
+					link_nonce[tmp] = 0;
+					if (link_secret[tmp])
+					{
+						free(link_secret[tmp]);
+						link_secret[tmp] = NULL;
+					}
+				}
+
+				if (!new_key_pair(PUB_KEY, PRIV_KEY)) goto cleanup;
+				break;
+
+			case '2':
+				printf("Broadcast message '%s'\n", msg);
+				send_raw_msg(NULL, SEND_RAW_TXT, msg, strlen(msg));
+				break;
+
+			default:
+				printf("ERROR: unknown serial operation: %s\n", msg);
+				break;
+			}
 		}
 	}
 
+cleanup:
 	PROCESS_END();
 }
 
 PROCESS_THREAD(nullnet_example_process, ev, data)
 {
 	static struct etimer periodic_timer;
+	uint16_t rand_seed;
 
 	PROCESS_BEGIN();
 
@@ -74,7 +131,12 @@ PROCESS_THREAD(nullnet_example_process, ev, data)
 	LOG_DBG("SSL Version %d --- ", OPENSSL_VERSION_MAJOR);
 	LOG_DBG_LLADDR(&linkaddr_node_addr);
 	LOG_DBG_("\n");
+
 	if (!new_key_pair(PUB_KEY, PRIV_KEY)) goto cleanup;
+	// init random number generator with first two bytes of private key
+	// one bit overlaps because contiki documentations says RAND_MAX is 0x7FFFFFFF
+	rand_seed = PRIV_KEY[0] | (PRIV_KEY[1] << 7);
+	random_init(rand_seed);
 
 	while(1)
 	{
