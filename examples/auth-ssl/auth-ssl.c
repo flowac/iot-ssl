@@ -17,7 +17,7 @@ PROCESS_THREAD(button_hal_example, ev, data)
 {
 	button_hal_button_t *btn;
 	PROCESS_BEGIN();
-	printf("Button initialized.\n");
+	LOG_DBG("Button initialized.\n");
 
 	while (1)
 	{
@@ -25,7 +25,7 @@ PROCESS_THREAD(button_hal_example, ev, data)
 		if (ev == button_hal_release_event)
 		{
 			btn = (button_hal_button_t *)data;
-			printf("Button %u released (%s)\n", btn->unique_id, BUTTON_HAL_GET_DESCRIPTION(btn));
+			LOG_DBG("Button %u released (%s)\n", btn->unique_id, BUTTON_HAL_GET_DESCRIPTION(btn));
 
 			memset(OUT_DATA, 0, DATA_LEN);
 			OUT_DATA[0] = SEND_PUB_KEY;
@@ -58,22 +58,22 @@ PROCESS_THREAD(test_serial_process, ev, data)
 
 		if (etimer_expired(&et))
 		{
-			printf("Waiting for serial data\n");
+			LOG_DBG("Waiting for serial data\n");
 			etimer_restart(&et);
 		}
 
 		if (ev == serial_line_event_message)
 		{
-			printf("Message received: '%s'\n", msg);
+			LOG_DBG("Message received: '%s'\n", msg);
 			switch (msg[0])
 			{
 			case '0':
 				srcid = TMP_REQ_SRC.u8[0];
 				if (!gen_secret(TMP_PUB_KEY, PRIV_KEY, &outlen, srcid)) goto cleanup;
-				LOG_INFO("Shared secret with %u: ", srcid);
+				LOG_INFO("Generated secret with %u: ", srcid);
 
 				tmp = strtol(msg + 1, NULL, 10);
-				printf("Sending OTP: %d\n", tmp);
+				LOG_INFO_("Sending OTP: %d and public key\n", tmp);
 
 				memset(OUT_DATA, 0, DATA_LEN);
 				OUT_DATA[0] = RETN_PUB_KEY;
@@ -84,7 +84,7 @@ PROCESS_THREAD(test_serial_process, ev, data)
 				break;
 
 			case '1':
-				printf("Re-generating public private key pair\n");
+				LOG_INFO("Re-generating public private key pair\n");
 				OTP = 0;
 				for (tmp = 0; tmp < MAX_DEVICES; ++tmp)
 				{
@@ -100,12 +100,12 @@ PROCESS_THREAD(test_serial_process, ev, data)
 				break;
 
 			case '2':
-				printf("Broadcast message '%s'\n", msg);
+				LOG_INFO("Broadcast message '%s'\n", msg);
 				send_raw_msg(NULL, SEND_RAW_TXT, msg, strlen(msg));
 				break;
 
 			default:
-				printf("ERROR: unknown serial operation: %s\n", msg);
+				LOG_ERR("Unknown serial operation: %s\n", msg);
 				break;
 			}
 		}
@@ -137,6 +137,8 @@ PROCESS_THREAD(nullnet_example_process, ev, data)
 	// one bit overlaps because contiki documentations says RAND_MAX is 0x7FFFFFFF
 	rand_seed = PRIV_KEY[0] | (PRIV_KEY[1] << 7);
 	random_init(rand_seed);
+	memset(link_secret, 0, sizeof(uint8_t *) * MAX_DEVICES);
+	memset(link_nonce, 0, sizeof(uint64_t) * MAX_DEVICES);
 
 	while(1)
 	{

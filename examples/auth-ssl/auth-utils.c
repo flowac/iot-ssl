@@ -21,6 +21,8 @@
 #include "dev/serial-line.h"
 #include "sys/log.h"
 
+#include "auth-io.c"
+
 #define LOG_MODULE "App"
 #define LOG_LEVEL LOG_LEVEL_INFO
 #define SEND_INTERVAL (CLOCK_SECOND << 1)
@@ -55,22 +57,6 @@ void calc_iv(int idx, uint8_t IV[IV_LEN])
 	++link_nonce[idx];
 	memcpy(IV, link_secret[idx] + (link_secret[idx][0] % 28), 4);
 	memcpy(IV + 4, &(link_nonce[idx]), 8);
-}
-
-// Helper function to print hex data
-void print_bytes(uint8_t *data, uint32_t len)
-{
-	uint32_t i;
-	for (i = 0; i < len; i++) printf("%02x", data[i]);
-	printf("\n");
-}
-
-// Helper function to print characters
-void print_chars(uint8_t *data, uint32_t len)
-{
-	uint32_t i;
-	for (i = 0; i < len; i++) printf("%c", data[i]);
-	printf("\n");
 }
 
 // Decrypt a link message
@@ -118,10 +104,13 @@ void send_enc_msg(int idx, const linkaddr_t *target, const enum OP_TYPE opt, con
 	outlen += tmplen;
 	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, OUT_DATA + 2) < 1) goto cleanup;
 
-	printf("%d bytes encrypted + 16 byte tag\n", outlen);
+	LOG_DBG("%d bytes encrypted + 16 byte tag\n", outlen);
 	OUT_DATA[0] = opt;
 	OUT_DATA[1] = (uint8_t) (outlen & 0xFF);
-	NETSTACK_NETWORK.output(target);
+
+	// Work-around for a bug where the target address gets set to the current node right before the request is sent
+	linkaddr_t tmp = *target; 
+	NETSTACK_NETWORK.output(&tmp);
 
 cleanup:
 	if (ctx) EVP_CIPHER_CTX_free(ctx);
@@ -206,7 +195,6 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 {
 	static uint8_t link_auth[MAX_DEVICES] = {}; // authentication status
 	uint8_t srcid = src->u8[0];
-	uint8_t myid = dest->u8[0]; (void) myid;
 	uint8_t *data = (uint8_t *) raw_data;
 	uint16_t tmp;
 	uint32_t outlen;
@@ -219,6 +207,9 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 		return;
 	}
 
+	LOG_DBG_LLADDR(src);
+	LOG_DBG_("\n");
+
 	opt = data[0];
 	data++;
 	--len;
@@ -226,62 +217,74 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 	if (opt == SEND_PUB_KEY)
 	{
 		data++; // ignore msg length indicator
+		srcid = data[0];
+		LOG_DBG("Got public key from %u\n", srcid);
+		if (link_secret[srcid]) return;
+
+		link_auth[srcid]++;
 		memcpy(TMP_REQ_SRC.u8, data, LINKADDR_SIZE);
 		memcpy(TMP_PUB_KEY, data + LINKADDR_SIZE, X25519_LEN);
-	}
-	else if (opt == RETN_PUB_KEY)
-	{
-		data++; // ignore msg length indicator
-		memcpy(&tmp, data, 2);
-		if (OTP == 0 || OTP != tmp)
-		{
-			LOG_ERR("%d entered incorrect OTP: %u\n", srcid, tmp);
-			link_auth[srcid]++;
-			return;
-		}
-
-		LOG_INFO("%d entered correct OTP: %u\n", srcid, OTP);
-		OTP = 0;
-		if (!gen_secret(data + 2, PRIV_KEY, &outlen, srcid)) return;
-		LOG_INFO("Shared secret with %u: ", srcid);
-		print_chars(link_secret[srcid], outlen);
-		send_enc_msg(srcid, src, CHECK_SECRET, link_secret[srcid], outlen);
-	}
-	else if (opt == CHECK_SECRET)
-	{
-		if (!link_secret[srcid]) return;
-		LOG_INFO("Got shared secret check from %d: ", srcid);
-		decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
-		printf("%d bytes decrypted: ", outlen);
-		print_chars(OUT_DATA, outlen);
-
-		if (0 == memcmp(link_secret[srcid], OUT_DATA, outlen))
-		{
-			LOG_INFO("%d is fully authenticated\n", srcid);
-			char *retmsg = "Shared secret matched";
-			send_enc_msg(srcid, src, SEND_MESSAGE, retmsg, strlen(retmsg));
-		}
-		else
-		{
-			LOG_ERR("%d failed to authenticate\n", srcid);
-			link_auth[srcid]++;
-		}
-	}
-	else if (opt == SEND_MESSAGE)
-	{
-		if (!link_secret[srcid]) return;
-		LOG_INFO("Got message from %d: ", srcid);
-		decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
-		printf("%d bytes decrypted: ", outlen);
-		print_chars(OUT_DATA, outlen);
 	}
 	else if (opt == SEND_RAW_TXT)
 	{
 		LOG_INFO("Got message from %d: ", srcid);
 		print_chars(data + 1, data[0]);
 	}
+	else if (dest->u8[0] != linkaddr_node_addr.u8[0])
+	{
+		LOG_INFO("Ignored message targeted for %d\n", dest->u8[0]);
+		return;
+	}
+	else if (link_secret[srcid])
+	{
+		if (opt == CHECK_SECRET)
+		{
+			LOG_INFO("Got shared secret check from %d: ", srcid);
+			decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
+			printf("%d bytes decrypted: ", outlen);
+			print_secret(OUT_DATA, outlen);
+
+			if (0 == memcmp(link_secret[srcid], OUT_DATA, outlen))
+			{
+				LOG_INFO("%d is fully authenticated\n", srcid);
+				char *retmsg = "Shared secret matched";
+				send_enc_msg(srcid, src, SEND_MESSAGE, retmsg, strlen(retmsg));
+			}
+			else
+			{
+				LOG_ERR("%d failed to authenticate\n", srcid);
+				free(link_secret[srcid]);
+				link_secret[srcid] = NULL;
+			}
+		}
+		else if (opt == SEND_MESSAGE)
+		{
+			LOG_INFO("Got message from %d: ", srcid);
+			decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
+			printf("%d bytes decrypted: ", outlen);
+			print_chars(OUT_DATA, outlen);
+		}
+	}
 	else
 	{
-		LOG_ERR("Invalid message type %d\n", opt);
+		if (opt == RETN_PUB_KEY)
+		{
+			data++; // ignore msg length indicator
+			memcpy(&tmp, data, 2);
+			if (OTP == 0 || OTP != tmp)
+			{
+				LOG_ERR("%d entered incorrect OTP: %u\n", srcid, tmp);
+				link_auth[srcid]++;
+				return;
+			}
+
+			LOG_INFO("%d entered correct OTP: %u. ", srcid, OTP);
+			OTP = 0;
+			if (!gen_secret(data + 2, PRIV_KEY, &outlen, srcid)) return;
+			LOG_INFO_("Shared secret with %u: ", srcid);
+			print_secret(link_secret[srcid], outlen);
+			link_auth[srcid] = 0;
+			send_enc_msg(srcid, src, CHECK_SECRET, link_secret[srcid], outlen);
+		}
 	}
 }

@@ -2,7 +2,7 @@
 <simconf>
   <simulation>
     <title>My simulation</title>
-    <speedlimit>20.0</speedlimit>
+    <speedlimit>1.0</speedlimit>
     <randomseed>123456</randomseed>
     <motedelay_us>1000000</motedelay_us>
     <radiomedium>
@@ -17,7 +17,7 @@
     </events>
     <motetype>
       org.contikios.cooja.contikimote.ContikiMoteType
-      <identifier>mtype24955889</identifier>
+      <identifier>mtype553449150</identifier>
       <description>Cooja Mote Type #1</description>
       <source>[CONFIG_DIR]/examples/auth-ssl/auth-ssl.c</source>
       <commands>make -j$(CPUS) auth-ssl.cooja TARGET=cooja</commands>
@@ -42,41 +42,49 @@
     <mote>
       <interface_config>
         org.contikios.cooja.interfaces.Position
-        <x>50.15028963041825</x>
-        <y>66.28855806916613</y>
+        <x>56.294272198658376</x>
+        <y>85.22186705938017</y>
         <z>0.0</z>
       </interface_config>
       <interface_config>
         org.contikios.cooja.contikimote.interfaces.ContikiMoteID
         <id>1</id>
       </interface_config>
-      <motetype_identifier>mtype24955889</motetype_identifier>
+      <interface_config>
+        org.contikios.cooja.contikimote.interfaces.ContikiRS232
+        <history>2abc~;</history>
+      </interface_config>
+      <motetype_identifier>mtype553449150</motetype_identifier>
     </mote>
     <mote>
       <interface_config>
         org.contikios.cooja.interfaces.Position
-        <x>61.62130957387507</x>
-        <y>71.06540009901822</y>
+        <x>72.10149859911948</x>
+        <y>61.03900211749102</y>
         <z>0.0</z>
       </interface_config>
       <interface_config>
         org.contikios.cooja.contikimote.interfaces.ContikiMoteID
         <id>2</id>
       </interface_config>
-      <motetype_identifier>mtype24955889</motetype_identifier>
+      <interface_config>
+        org.contikios.cooja.contikimote.interfaces.ContikiRS232
+        <history>2asfca~;026661~;015642~;15642~;2sfdesjd~;1asdas~;027417~;054666~;</history>
+      </interface_config>
+      <motetype_identifier>mtype553449150</motetype_identifier>
     </mote>
     <mote>
       <interface_config>
         org.contikios.cooja.interfaces.Position
-        <x>61.25638801777483</x>
-        <y>59.81588718389912</y>
+        <x>95.08130455668694</x>
+        <y>70.19237657176512</y>
         <z>0.0</z>
       </interface_config>
       <interface_config>
         org.contikios.cooja.contikimote.interfaces.ContikiMoteID
         <id>3</id>
       </interface_config>
-      <motetype_identifier>mtype24955889</motetype_identifier>
+      <motetype_identifier>mtype553449150</motetype_identifier>
     </mote>
   </simulation>
   <plugin>
@@ -87,13 +95,13 @@
       <skin>org.contikios.cooja.plugins.skins.GridVisualizerSkin</skin>
       <skin>org.contikios.cooja.plugins.skins.TrafficVisualizerSkin</skin>
       <skin>org.contikios.cooja.plugins.skins.UDGMVisualizerSkin</skin>
-      <viewport>5.648002614372907 0.0 0.0 5.648002614372907 -200.61260330779714 -234.88775741418607</viewport>
+      <viewport>3.702847233387367 0.0 0.0 3.702847233387367 -14.526190067711296 14.709172607795402</viewport>
     </plugin_config>
     <width>400</width>
     <z>1</z>
     <height>400</height>
-    <location_x>32</location_x>
-    <location_y>10</location_y>
+    <location_x>1</location_x>
+    <location_y>1</location_y>
   </plugin>
   <plugin>
     org.contikios.cooja.plugins.LogListener
@@ -102,11 +110,11 @@
       <formatted_time />
       <coloring />
     </plugin_config>
-    <width>1017</width>
-    <z>0</z>
-    <height>653</height>
-    <location_x>201</location_x>
-    <location_y>0</location_y>
+    <width>1007</width>
+    <z>3</z>
+    <height>769</height>
+    <location_x>399</location_x>
+    <location_y>1</location_y>
   </plugin>
   <plugin>
     org.contikios.cooja.plugins.TimeLine
@@ -119,23 +127,37 @@
       <showLEDs />
       <zoomfactor>500.0</zoomfactor>
     </plugin_config>
-    <width>834</width>
-    <z>3</z>
+    <width>1406</width>
+    <z>4</z>
     <height>166</height>
     <location_x>0</location_x>
-    <location_y>447</location_y>
+    <location_y>770</location_y>
   </plugin>
   <plugin>
     org.contikios.cooja.plugins.Notes
     <plugin_config>
-      <notes>Enter notes here</notes>
+      <notes>Save simulation?
+Save docker state?</notes>
       <decorations>true</decorations>
     </plugin_config>
-    <width>154</width>
+    <width>396</width>
     <z>2</z>
-    <height>160</height>
-    <location_x>680</location_x>
-    <location_y>0</location_y>
+    <height>286</height>
+    <location_x>2</location_x>
+    <location_y>402</location_y>
+  </plugin>
+  <plugin>
+    org.contikios.cooja.plugins.MoteInterfaceViewer
+    <mote_arg>1</mote_arg>
+    <plugin_config>
+      <interface>Serial port</interface>
+      <scrollpos>0,0</scrollpos>
+    </plugin_config>
+    <width>530</width>
+    <z>0</z>
+    <height>772</height>
+    <location_x>1118</location_x>
+    <location_y>-3</location_y>
   </plugin>
 </simconf>
 
