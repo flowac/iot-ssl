@@ -71,15 +71,14 @@ PROCESS_THREAD(test_serial_process, ev, data)
 				srcid = TMP_REQ_SRC.u8[0];
 				if (!gen_secret(TMP_PUB_KEY, PRIV_KEY, &outlen, srcid)) goto cleanup;
 				LOG_INFO("Generated secret with %u: ", srcid);
+				print_secret(link_secret[srcid], outlen);
 
 				tmp = strtol(msg + 1, NULL, 10);
-				LOG_INFO_("Sending OTP: %d and public key\n", tmp);
+				LOG_INFO("Sending encrypted OTP %d and public key\n", tmp);
 
-				memset(OUT_DATA, 0, DATA_LEN);
-				OUT_DATA[0] = RETN_PUB_KEY;
-				OUT_DATA[1] = (2 + X25519_LEN) & 0xFF;
-				memcpy(OUT_DATA + 2, &tmp, 2);
-				memcpy(OUT_DATA + 4, PUB_KEY, X25519_LEN);
+				// OTP is encrypted to prevent man in the middle attacks
+				encrypt_msg(srcid, RETN_PUB_KEY, (uint8_t *) &tmp, 2);
+				memcpy(OUT_DATA + 2 + OUT_DATA[1] + 16, PUB_KEY, X25519_LEN);
 				NETSTACK_NETWORK.output(&TMP_REQ_SRC);
 				break;
 

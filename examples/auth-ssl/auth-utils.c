@@ -84,8 +84,8 @@ cleanup:
 	if (ctx) EVP_CIPHER_CTX_free(ctx);
 }
 
-// Send an encrypted message
-void send_enc_msg(int idx, const linkaddr_t *target, const enum OP_TYPE opt, const void *msg, const uint32_t msglen)
+// Encrypted a message
+void encrypt_msg(int idx, const enum OP_TYPE opt, const void *msg, const uint32_t msglen)
 {
 	int outlen = 0, tmplen = 0;
 	uint8_t IV[IV_LEN]; // AES-GCM initialization vector
@@ -108,12 +108,17 @@ void send_enc_msg(int idx, const linkaddr_t *target, const enum OP_TYPE opt, con
 	OUT_DATA[0] = opt;
 	OUT_DATA[1] = (uint8_t) (outlen & 0xFF);
 
-	// Work-around for a bug where the target address gets set to the current node right before the request is sent
-	linkaddr_t tmp = *target; 
-	NETSTACK_NETWORK.output(&tmp);
-
 cleanup:
 	if (ctx) EVP_CIPHER_CTX_free(ctx);
+}
+
+// Send an encrypted message
+void send_enc_msg(int idx, const linkaddr_t *target, const enum OP_TYPE opt, const void *msg, const uint32_t msglen)
+{
+	// Work-around for a bug where the target address gets set to the current node right before the request is sent
+	linkaddr_t tmp = *target; 
+	encrypt_msg(idx, opt, msg, msglen);
+	NETSTACK_NETWORK.output(&tmp);
 }
 
 // Send a plain-text message
@@ -269,22 +274,25 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 	{
 		if (opt == RETN_PUB_KEY)
 		{
-			data++; // ignore msg length indicator
-			memcpy(&tmp, data, 2);
+			if (!gen_secret(data + 19, PRIV_KEY, &outlen, srcid)) return;
+			LOG_INFO("Shared secret with %u: ", srcid);
+			print_secret(link_secret[srcid], outlen);
+			link_auth[srcid] = 0;
+
+			decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
+			memcpy(&tmp, OUT_DATA, 2);
 			if (OTP == 0 || OTP != tmp)
 			{
+				free(link_secret[srcid]);
+				link_secret[srcid] = NULL;
 				LOG_ERR("%d entered incorrect OTP: %u\n", srcid, tmp);
 				link_auth[srcid]++;
 				return;
 			}
 
-			LOG_INFO("%d entered correct OTP: %u. ", srcid, OTP);
+			LOG_INFO("%d entered correct OTP: %u\n", srcid, OTP);
 			OTP = 0;
-			if (!gen_secret(data + 2, PRIV_KEY, &outlen, srcid)) return;
-			LOG_INFO_("Shared secret with %u: ", srcid);
-			print_secret(link_secret[srcid], outlen);
-			link_auth[srcid] = 0;
-			send_enc_msg(srcid, src, CHECK_SECRET, link_secret[srcid], outlen);
+			send_enc_msg(srcid, src, CHECK_SECRET, link_secret[srcid], X25519_LEN);
 		}
 	}
 }
