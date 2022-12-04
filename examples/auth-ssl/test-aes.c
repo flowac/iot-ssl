@@ -16,7 +16,7 @@
 
 #include <openssl/evp.h>
 
-#define TEST_CYCLES 1000
+#define TEST_CYCLES 10000
 #define CBC_IV_LEN    16
 #define GCM_IV_LEN    12
 #define GCM_TAG_LEN   16
@@ -134,6 +134,7 @@ int check_data(const void *data1, const void *data2, const uint32_t datalen)
 
 void test_aes()
 {
+	static int type = 0;
 	clock_time_t start, total;
 	int i, outlen;
 
@@ -141,27 +142,33 @@ void test_aes()
 	for (i = 0; i < DATA_SIZE; i++) RAW_DATA[i] = (uint8_t) (random_rand() & 0xFF);
 	for (i = 0; i < KEY_256_LEN; i++) KEY_256[i] = (uint8_t) (random_rand() & 0xFF);
 
-	start = clock_time();
-	for (i = 0; i < TEST_CYCLES; i++)
+	if (type & 1)
 	{
-		GCM_IV[0]++;
-		encrypt_gcm_256(RAW_DATA, DATA_SIZE, ENC_DATA, &outlen, GCM_TAG, GCM_IV);
-		decrypt_gcm_256(ENC_DATA, DATA_SIZE, DEC_DATA, &outlen, GCM_TAG, GCM_IV);
-		if (!check_data(RAW_DATA, DEC_DATA, DATA_SIZE)) printf("AES GCM encryption / decryption failed\n");
+		start = clock_time();
+		for (i = 0; i < TEST_CYCLES; i++)
+		{
+			GCM_IV[0]++;
+			encrypt_gcm_256(RAW_DATA, DATA_SIZE, ENC_DATA, &outlen, GCM_TAG, GCM_IV);
+			decrypt_gcm_256(ENC_DATA, DATA_SIZE, DEC_DATA, &outlen, GCM_TAG, GCM_IV);
+			if (!check_data(RAW_DATA, DEC_DATA, DATA_SIZE)) printf("AES GCM encryption / decryption failed\n");
+		}
+		total = start - clock_time();
+		printf("AES GCM 256 took %lu\n", total);
 	}
-	total = start - clock_time();
-	printf("AES GCM 256 took %lu\n", total);
-
-	start = clock_time();
-	for (i = 0; i < TEST_CYCLES; i++)
+	else
 	{
-		CBC_IV[0]++;
-		encrypt_cbc_128(RAW_DATA, DATA_SIZE, ENC_DATA, &outlen, CBC_IV, CBC_DATA);
-		decrypt_cbc_128(ENC_DATA, DATA_SIZE, DEC_DATA, &outlen, CBC_IV, CBC_DATA);
-		if (!check_data(RAW_DATA, DEC_DATA, DATA_SIZE)) printf("AES CBC encryption / decryption failed\n");
+		start = clock_time();
+		for (i = 0; i < TEST_CYCLES; i++)
+		{
+			CBC_IV[0]++;
+			encrypt_cbc_128(RAW_DATA, DATA_SIZE, ENC_DATA, &outlen, CBC_IV, CBC_DATA);
+			decrypt_cbc_128(ENC_DATA, DATA_SIZE, DEC_DATA, &outlen, CBC_IV, CBC_DATA);
+			if (!check_data(RAW_DATA, DEC_DATA, DATA_SIZE)) printf("AES CBC encryption / decryption failed\n");
+		}
+		total = start - clock_time();
+		printf("AES CBC 128 took %lu\n", total);
 	}
-	total = start - clock_time();
-	printf("AES CBC 128 took %lu\n", total);
+	type++;
 }
 /*---------------------------------------------------------------------------*/
 PROCESS(test_aes_process, "AES test process");
