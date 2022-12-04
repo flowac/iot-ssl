@@ -103,8 +103,18 @@ PROCESS_THREAD(test_serial_process, ev, data)
 				send_raw_msg(NULL, SEND_RAW_TXT, msg, strlen(msg));
 				break;
 
+			case '3':
+				LOG_INFO("Resetting blacklist\n");
+				memset(link_blacklist, 0, sizeof(link_blacklist));
+				break;
+
 			default:
 				LOG_ERR("Unknown serial operation: %s\n", msg);
+				LOG_ERR("Options:\n"
+					"0<data>    -- send OTP value (no space after 0)\n"
+					"1          -- delete all shared secrets and regenerate public private key pair\n"
+					"2<message> -- broadcast plain text message\n"
+					"3          -- reset blacklist\n");
 				break;
 			}
 		}

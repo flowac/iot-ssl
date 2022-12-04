@@ -50,6 +50,7 @@ static uint8_t TMP_PUB_KEY[X25519_LEN]; // public key of incoming peering reques
 static uint8_t PUB_KEY[X25519_LEN], PRIV_KEY[X25519_LEN]; // public private X25519 key pair
 static uint8_t *link_secret[MAX_DEVICES] = {}; // shared secret keys
 static uint64_t link_nonce[MAX_DEVICES] = {}; // nonce of devices
+static uint8_t link_blacklist[MAX_DEVICES] = {}; // device blacklist (blocked if value is over MAX_AUTH_RETRY)
 
 // Calculate shared initialization vector value for the specified node pair
 void calc_iv(int idx, uint8_t IV[IV_LEN])
@@ -198,7 +199,6 @@ cleanup:
 // Network connection callback
 void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest)
 {
-	static uint8_t link_auth[MAX_DEVICES] = {}; // authentication status
 	uint8_t srcid = src->u8[0];
 	uint8_t *data = (uint8_t *) raw_data;
 	uint16_t tmp;
@@ -206,7 +206,7 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 	enum OP_TYPE opt;
 
 	if (len < DATA_LEN || srcid > MAX_DEVICES) return;
-	if (link_auth[srcid] > MAX_AUTH_RETRY)
+	if (link_blacklist[srcid] > MAX_AUTH_RETRY)
 	{
 		LOG_INFO("Blocked connection from %u due to auth fail\n", srcid);
 		return;
@@ -226,7 +226,7 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 		LOG_DBG("Got public key from %u\n", srcid);
 		if (link_secret[srcid]) return;
 
-		link_auth[srcid]++;
+		link_blacklist[srcid]++;
 		memcpy(TMP_REQ_SRC.u8, data, LINKADDR_SIZE);
 		memcpy(TMP_PUB_KEY, data + LINKADDR_SIZE, X25519_LEN);
 	}
@@ -277,7 +277,7 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 			if (!gen_secret(data + 19, PRIV_KEY, &outlen, srcid)) return;
 			LOG_INFO("Shared secret with %u: ", srcid);
 			print_secret(link_secret[srcid], outlen);
-			link_auth[srcid] = 0;
+			link_blacklist[srcid] = 0;
 
 			decrypt_link_msg(srcid, data, OUT_DATA, &outlen);
 			memcpy(&tmp, OUT_DATA, 2);
@@ -286,7 +286,7 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 				free(link_secret[srcid]);
 				link_secret[srcid] = NULL;
 				LOG_ERR("%d entered incorrect OTP: %u\n", srcid, tmp);
-				link_auth[srcid]++;
+				link_blacklist[srcid]++;
 				return;
 			}
 
