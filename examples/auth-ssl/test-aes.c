@@ -16,13 +16,24 @@
 
 #include <openssl/evp.h>
 
-#define TEST_CYCLES 10000
-#define CBC_IV_LEN    16
-#define GCM_IV_LEN    12
-#define GCM_TAG_LEN   16
-#define KEY_128_LEN   16
-#define KEY_256_LEN   32
-#define DATA_SIZE 1024 * 1024
+#define CBC_IV_LEN  16
+#define GCM_IV_LEN  12
+#define GCM_TAG_LEN 16
+#define KEY_128_LEN 16
+#define KEY_256_LEN 32
+
+#define DATA_SIZE_1   (64)
+#define DATA_SIZE_2   (2 * 1024)
+#define DATA_SIZE_3   (64 * 1024)
+#define DATA_SIZE_4   (2 * 1024 * 1024)
+#define TEST_CYCLES_1 (32 * 1024 * 1024)
+#define TEST_CYCLES_2 (1024 * 1024)
+#define TEST_CYCLES_3 (32 * 1024)
+#define TEST_CYCLES_4 (1024)
+
+#define DATA_SIZE   DATA_SIZE_4
+#define TEST_CYCLES TEST_CYCLES_4
+
 static uint8_t RAW_DATA[DATA_SIZE]; // original data
 static uint8_t ENC_DATA[DATA_SIZE]; // encrypted data
 static uint8_t DEC_DATA[DATA_SIZE]; // decrypted data
@@ -136,7 +147,8 @@ void test_aes()
 {
 	static int type = 0;
 	clock_time_t start, total;
-	int i, outlen;
+	int outlen;
+	int64_t i;
 
 	random_init(12345U);
 	for (i = 0; i < DATA_SIZE; i++) RAW_DATA[i] = (uint8_t) (random_rand() & 0xFF);
