@@ -29,9 +29,9 @@ PROCESS_THREAD(button_hal_example, ev, data)
 
 			memset(OUT_DATA, 0, DATA_LEN);
 			OUT_DATA[0] = SEND_PUB_KEY;
-			OUT_DATA[1] = LINKADDR_SIZE + X25519_LEN;
-			memcpy(OUT_DATA + 2, linkaddr_node_addr.u8, LINKADDR_SIZE);
-			memcpy(OUT_DATA + 2 + LINKADDR_SIZE, PUB_KEY, X25519_LEN);
+			OUT_DATA[2] = LINKADDR_SIZE + X25519_LEN;
+			memcpy(OUT_DATA + 3, linkaddr_node_addr.u8, LINKADDR_SIZE);
+			memcpy(OUT_DATA + 3 + LINKADDR_SIZE, PUB_KEY, X25519_LEN);
 			NETSTACK_NETWORK.output(NULL);
 
 			OTP = random_rand();
@@ -78,7 +78,7 @@ PROCESS_THREAD(test_serial_process, ev, data)
 
 				// OTP is encrypted to prevent man in the middle attacks
 				encrypt_msg(srcid, RETN_PUB_KEY, (uint8_t *) &tmp, 2);
-				memcpy(OUT_DATA + 2 + OUT_DATA[1] + 16, PUB_KEY, X25519_LEN);
+				memcpy(OUT_DATA + 3 + OUT_DATA[2] + 16, PUB_KEY, X25519_LEN);
 				NETSTACK_NETWORK.output(&TMP_REQ_SRC);
 				break;
 

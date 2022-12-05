@@ -29,7 +29,7 @@
 
 #define IV_LEN 12
 #define X25519_LEN 32
-#define DATA_LEN 64
+#define DATA_LEN 100UL
 #define MAX_AUTH_RETRY 2
 #define MAX_DEVICES 16
 
@@ -63,12 +63,14 @@ void calc_iv(int idx, uint8_t IV[IV_LEN])
 // Decrypt a link message
 void decrypt_link_msg(int idx, uint8_t *data, uint8_t *outdata, uint32_t *outlen)
 {
-	int datalen = data[0], tmplen = 0;
+	int datalen, tmplen = 0;
 	uint8_t IV[IV_LEN]; // AES-GCM initialization vector
 	EVP_CIPHER_CTX *ctx = NULL;
 
+	datalen = (data[0] << 8) | data[1];
+	data += 2;
 	*outlen = 0;
-	data += 1;
+
 	if (idx > MAX_DEVICES || !(link_secret[idx])) goto cleanup;
 	calc_iv(idx, IV);
 
@@ -99,15 +101,16 @@ void encrypt_msg(int idx, const enum OP_TYPE opt, const void *msg, const uint32_
 	if (!(ctx = EVP_CIPHER_CTX_new())) goto cleanup;
 	if (EVP_EncryptInit_ex2(ctx, EVP_aes_256_gcm(), link_secret[idx], IV, NULL) < 1) goto cleanup;
 	if (EVP_CIPHER_CTX_set_padding(ctx, 0) < 1) goto cleanup;
-	if (EVP_EncryptUpdate(ctx, OUT_DATA + 18, &tmplen, msg, msglen) < 1) goto cleanup;
+	if (EVP_EncryptUpdate(ctx, OUT_DATA + 19, &tmplen, msg, msglen) < 1) goto cleanup;
 	outlen = tmplen;
-	if (EVP_EncryptFinal_ex(ctx, OUT_DATA + 18 + outlen, &tmplen) < 1) goto cleanup;
+	if (EVP_EncryptFinal_ex(ctx, OUT_DATA + 19 + outlen, &tmplen) < 1) goto cleanup;
 	outlen += tmplen;
-	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, OUT_DATA + 2) < 1) goto cleanup;
+	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, OUT_DATA + 3) < 1) goto cleanup;
 
 	LOG_DBG("%d bytes encrypted + 16 byte tag\n", outlen);
 	OUT_DATA[0] = opt;
-	OUT_DATA[1] = (uint8_t) (outlen & 0xFF);
+	OUT_DATA[1] = (uint8_t) ((outlen >> 8) & 0xFF);
+	OUT_DATA[2] = (uint8_t) (outlen & 0xFF);
 
 cleanup:
 	if (ctx) EVP_CIPHER_CTX_free(ctx);
@@ -127,8 +130,9 @@ void send_raw_msg(const linkaddr_t *dest, const enum OP_TYPE opt, const void *ms
 {
 	memset(OUT_DATA, 0, DATA_LEN);
 	OUT_DATA[0] = opt;
-	OUT_DATA[1] = (uint8_t) (msglen & 0xFF);
-	memcpy(OUT_DATA + 2, msg, msglen);
+	OUT_DATA[1] = (uint8_t) ((msglen >> 8) & 0xFF);
+	OUT_DATA[2] = (uint8_t) (msglen & 0xFF);
+	memcpy(OUT_DATA + 3, msg, msglen);
 	NETSTACK_NETWORK.output(dest);
 }
 
@@ -221,7 +225,7 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 
 	if (opt == SEND_PUB_KEY)
 	{
-		data++; // ignore msg length indicator
+		data += 2; // ignore msg length indicator
 		srcid = data[0];
 		LOG_DBG("Got public key from %u\n", srcid);
 		if (link_secret[srcid]) return;
@@ -233,7 +237,7 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 	else if (opt == SEND_RAW_TXT)
 	{
 		LOG_INFO("Got message from %d: ", srcid);
-		print_chars(data + 1, data[0]);
+		print_chars(data + 1, ((data[0] << 8) | data[1]) );
 	}
 	else if (dest->u8[0] != linkaddr_node_addr.u8[0])
 	{
@@ -274,7 +278,7 @@ void input_callback(const void *raw_data, uint16_t len, const linkaddr_t *src, c
 	{
 		if (opt == RETN_PUB_KEY)
 		{
-			if (!gen_secret(data + 19, PRIV_KEY, &outlen, srcid)) return;
+			if (!gen_secret(data + 20, PRIV_KEY, &outlen, srcid)) return;
 			LOG_INFO("Shared secret with %u: ", srcid);
 			print_secret(link_secret[srcid], outlen);
 			link_blacklist[srcid] = 0;
